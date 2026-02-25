@@ -1,8 +1,8 @@
-# Handshacke
+# OUROBOROS
 
 Deterministic P2P communication without servers.
 
-Handshacke is a P2P communication system that uses deterministic cryptographic rendezvous to establish secure connections without any central servers, DNS lookups, or traditional discovery protocols.
+OUROBOROS is a P2P communication system that uses deterministic cryptographic rendezvous to establish secure connections without any central servers, DNS lookups, or traditional discovery protocols.
 
 Repository: https://github.com/omarsomaro/HANDSHAKE
 License: MIT
