@@ -77,7 +77,11 @@ async fn api_ethersync_files_publish_emits_sse_events() -> anyhow::Result<()> {
             }))
             .send()
             .await?;
-        assert!(start_resp.status().is_success(), "start failed: {}", start_resp.status());
+        assert!(
+            start_resp.status().is_success(),
+            "start failed: {}",
+            start_resp.status()
+        );
 
         let mut events_resp = client
             .get(format!("{}/v1/ethersync/events", base_url))
@@ -113,9 +117,7 @@ async fn api_ethersync_files_publish_emits_sse_events() -> anyhow::Result<()> {
             loop {
                 let maybe_chunk = events_resp.chunk().await?;
                 let Some(chunk) = maybe_chunk else {
-                    return Err(anyhow::anyhow!(
-                        "events stream closed before file events"
-                    ));
+                    return Err(anyhow::anyhow!("events stream closed before file events"));
                 };
                 let text = String::from_utf8_lossy(&chunk);
                 if text.contains("space_file_publish_started")
@@ -152,7 +154,11 @@ async fn api_ethersync_files_publish_rejects_invalid_base64() -> anyhow::Result<
             }))
             .send()
             .await?;
-        assert!(start_resp.status().is_success(), "start failed: {}", start_resp.status());
+        assert!(
+            start_resp.status().is_success(),
+            "start failed: {}",
+            start_resp.status()
+        );
 
         let resp = client
             .post(format!("{}/v1/ethersync/files/publish", base_url))
@@ -213,7 +219,11 @@ async fn api_ethersync_requires_bearer_when_token_enabled() -> anyhow::Result<()
             }))
             .send()
             .await?;
-        assert!(start_resp.status().is_success(), "start failed: {}", start_resp.status());
+        assert!(
+            start_resp.status().is_success(),
+            "start failed: {}",
+            start_resp.status()
+        );
 
         let payload = build_payload(64);
         let publish_unauthorized = client
@@ -255,8 +265,8 @@ async fn api_ethersync_requires_bearer_when_token_enabled() -> anyhow::Result<()
 }
 
 #[tokio::test]
-async fn api_ethersync_preflight_options_bypasses_auth_and_sets_cors_headers(
-) -> anyhow::Result<()> {
+async fn api_ethersync_preflight_options_bypasses_auth_and_sets_cors_headers() -> anyhow::Result<()>
+{
     let token = "super-secret-token";
     let (base_url, app_state, server) = spawn_api_server_with_token(Some(token)).await?;
     let client = reqwest::Client::new();
@@ -270,11 +280,18 @@ async fn api_ethersync_preflight_options_bypasses_auth_and_sets_cors_headers(
             )
             .header(header::ORIGIN, &origin)
             .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
-            .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "authorization,content-type")
+            .header(
+                header::ACCESS_CONTROL_REQUEST_HEADERS,
+                "authorization,content-type",
+            )
             .send()
             .await?;
 
-        assert!(preflight.status().is_success(), "preflight status={}", preflight.status());
+        assert!(
+            preflight.status().is_success(),
+            "preflight status={}",
+            preflight.status()
+        );
         assert_ne!(
             preflight.status(),
             reqwest::StatusCode::UNAUTHORIZED,

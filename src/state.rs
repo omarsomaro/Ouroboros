@@ -598,7 +598,9 @@ impl AppState {
                                         ts_ms: now_ms(),
                                         space_id: Some(space_id_for_task.clone()),
                                         slot_id: Some(message.header.slot_id),
-                                        payload_b64: Some(general_purpose::STANDARD.encode(payload)),
+                                        payload_b64: Some(
+                                            general_purpose::STANDARD.encode(payload),
+                                        ),
                                         text: None,
                                         info: Some(format!(
                                             "{} ({}/{})",
@@ -804,12 +806,7 @@ impl AppState {
                     slot_id: Some(message.header.slot_id),
                     payload_b64: None,
                     text: None,
-                    info: Some(format!(
-                        "{} {}/{}",
-                        clean_filename,
-                        idx + 1,
-                        total_chunks
-                    )),
+                    info: Some(format!("{} {}/{}", clean_filename, idx + 1, total_chunks)),
                     error: None,
                 },
             );

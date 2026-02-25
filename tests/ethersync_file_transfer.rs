@@ -102,7 +102,9 @@ async fn collect_transfer_payload(
                 continue;
             }
 
-            if envelope.total_chunks != expected_chunks || envelope.total_bytes != expected_total_bytes {
+            if envelope.total_chunks != expected_chunks
+                || envelope.total_bytes != expected_total_bytes
+            {
                 return Err(anyhow::anyhow!(
                     "unexpected envelope dimensions chunks={} bytes={}",
                     envelope.total_chunks,
