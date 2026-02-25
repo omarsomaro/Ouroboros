@@ -1,0 +1,23 @@
+name: Performance
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+jobs:
+  perf-budget:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run reproducible perf suite
+        run: cargo run --release --locked --bin perf_suite -- --check-budgets --output perf-metrics.json
+
+      - name: Upload performance report
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-metrics
+          path: perf-metrics.json
+          if-no-files-found: error

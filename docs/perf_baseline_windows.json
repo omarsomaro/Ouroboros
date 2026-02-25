@@ -1,0 +1,18 @@
+{
+  "generated_at_unix_ms": 1771944643453,
+  "derive_avg_ms": 13.444862500000001,
+  "noise_handshake_avg_ms": 0.48251250000000007,
+  "crypto_throughput_mib_s": 42.767556020160995,
+  "memory_hwm_delta_kib": null,
+  "budgets": {
+    "derive_avg_ms_max": 300.0,
+    "noise_avg_ms_max": 120.0,
+    "throughput_mib_s_min": 10.0,
+    "memory_delta_kib_max": 131072,
+    "derive_ok": true,
+    "noise_ok": true,
+    "throughput_ok": true,
+    "memory_ok": true,
+    "all_ok": true
+  }
+}

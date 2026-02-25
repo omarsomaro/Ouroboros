@@ -1,0 +1,38 @@
+[package]
+name = "handshacke-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+base64 = "0.22"
+bincode = "1.3"
+handshacke = { path = ".." }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "fuzz_offer_decode"
+path = "fuzz_targets/fuzz_offer_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_protocol_and_cipher"
+path = "fuzz_targets/fuzz_protocol_and_cipher.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_frame_len"
+path = "fuzz_targets/fuzz_frame_len.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

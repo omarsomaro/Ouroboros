@@ -1,0 +1,325 @@
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::Arc;
+
+use blake3::Hasher;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+use tokio::sync::RwLock;
+
+#[cfg(feature = "dht")]
+mod kad;
+
+#[cfg(feature = "dht")]
+pub use kad::KadDiscoveryProvider;
+
+#[derive(Debug, Error)]
+pub enum DiscoveryError {
+    #[error("invalid announce ttl: {0}")]
+    InvalidTtl(u64),
+    #[error("backend error: {0}")]
+    Backend(String),
+}
+
+type Result<T> = std::result::Result<T, DiscoveryError>;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DiscoveryRecord {
+    pub endpoint: SocketAddr,
+    pub observed_at_ms: u64,
+    pub ttl_ms: u64,
+}
+
+/// Deterministic namespace key used by discovery backends.
+///
+/// Derived from rendezvous primitives so peers sharing the same secret material map
+/// into the same discovery space.
+pub fn space_hash_from_rendezvous(port: u16, tag16: u16, key_enc: &[u8; 32]) -> [u8; 32] {
+    let mut h = Hasher::new();
+    h.update(b"hs/discovery-space/v1");
+    h.update(&port.to_le_bytes());
+    h.update(&tag16.to_le_bytes());
+    h.update(key_enc);
+    *h.finalize().as_bytes()
+}
+
+/// Parse configured bootstrap peers (`host:port`) while skipping invalid entries.
+pub fn parse_bootstrap_peers(peers: &[String]) -> Vec<SocketAddr> {
+    let mut out = Vec::new();
+    for entry in peers {
+        if let Ok(addr) = entry.parse::<SocketAddr>() {
+            if !out.contains(&addr) {
+                out.push(addr);
+            }
+        } else {
+            tracing::warn!("Ignoring invalid discovery bootstrap peer: {}", entry);
+        }
+    }
+    out
+}
+
+/// Abstraction layer for discovery backends (LAN cache, relay index, DHT/Kademlia).
+#[async_trait::async_trait]
+pub trait DiscoveryProvider: Send + Sync {
+    async fn announce(&self, space_hash: [u8; 32], record: DiscoveryRecord) -> Result<()>;
+    async fn discover(&self, space_hash: [u8; 32], limit: usize) -> Result<Vec<SocketAddr>>;
+}
+
+/// Federated provider that fans out announces/discovery across multiple backends.
+///
+/// This provides a bootstrap-like behavior for multi-node environments while keeping
+/// discovery backend-agnostic (LAN cache, relay index, DHT).
+#[derive(Clone, Default)]
+pub struct FederatedDiscovery {
+    backends: Vec<Arc<dyn DiscoveryProvider>>,
+}
+
+impl FederatedDiscovery {
+    pub fn new(backends: Vec<Arc<dyn DiscoveryProvider>>) -> Self {
+        Self { backends }
+    }
+}
+
+#[async_trait::async_trait]
+impl DiscoveryProvider for FederatedDiscovery {
+    async fn announce(&self, space_hash: [u8; 32], record: DiscoveryRecord) -> Result<()> {
+        for backend in &self.backends {
+            backend
+                .announce(space_hash, record.clone())
+                .await
+                .map_err(|e| DiscoveryError::Backend(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    async fn discover(&self, space_hash: [u8; 32], limit: usize) -> Result<Vec<SocketAddr>> {
+        let mut out = Vec::new();
+        for backend in &self.backends {
+            let discovered = backend
+                .discover(space_hash, limit)
+                .await
+                .map_err(|e| DiscoveryError::Backend(e.to_string()))?;
+            for addr in discovered {
+                if !out.contains(&addr) {
+                    out.push(addr);
+                }
+                if out.len() >= limit {
+                    return Ok(out);
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// Higher-level discovery API with bootstrap fallback.
+#[derive(Clone)]
+pub struct DiscoveryService<P: DiscoveryProvider> {
+    provider: P,
+    bootstrap_peers: Vec<SocketAddr>,
+}
+
+impl<P: DiscoveryProvider> DiscoveryService<P> {
+    pub fn new(provider: P) -> Self {
+        Self {
+            provider,
+            bootstrap_peers: Vec::new(),
+        }
+    }
+
+    pub fn with_bootstrap_peers(provider: P, bootstrap_peers: Vec<SocketAddr>) -> Self {
+        Self {
+            provider,
+            bootstrap_peers,
+        }
+    }
+
+    pub async fn announce_endpoint(
+        &self,
+        space_hash: [u8; 32],
+        endpoint: SocketAddr,
+        observed_at_ms: u64,
+        ttl_ms: u64,
+    ) -> Result<()> {
+        self.provider
+            .announce(
+                space_hash,
+                DiscoveryRecord {
+                    endpoint,
+                    observed_at_ms,
+                    ttl_ms,
+                },
+            )
+            .await
+    }
+
+    pub async fn discover_endpoints(
+        &self,
+        space_hash: [u8; 32],
+        limit: usize,
+    ) -> Result<Vec<SocketAddr>> {
+        let mut out = self.provider.discover(space_hash, limit).await?;
+        if out.len() < limit {
+            for peer in &self.bootstrap_peers {
+                if !out.contains(peer) {
+                    out.push(*peer);
+                }
+                if out.len() >= limit {
+                    break;
+                }
+            }
+        }
+        out.truncate(limit);
+        Ok(out)
+    }
+}
+
+/// In-memory discovery cache used as local baseline and test backend.
+#[derive(Clone, Default)]
+pub struct InMemoryDiscovery {
+    entries: Arc<RwLock<HashMap<[u8; 32], Vec<DiscoveryRecord>>>>,
+}
+
+impl InMemoryDiscovery {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait::async_trait]
+impl DiscoveryProvider for InMemoryDiscovery {
+    async fn announce(&self, space_hash: [u8; 32], record: DiscoveryRecord) -> Result<()> {
+        if record.ttl_ms == 0 {
+            return Err(DiscoveryError::InvalidTtl(record.ttl_ms));
+        }
+        let mut guard = self.entries.write().await;
+        let entry = guard.entry(space_hash).or_default();
+        entry.retain(|r| r.endpoint != record.endpoint);
+        entry.push(record);
+        Ok(())
+    }
+
+    async fn discover(&self, space_hash: [u8; 32], limit: usize) -> Result<Vec<SocketAddr>> {
+        let guard = self.entries.read().await;
+        let mut out: Vec<SocketAddr> = guard
+            .get(&space_hash)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|r| r.endpoint)
+            .collect();
+        out.truncate(limit);
+        Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn in_memory_discovery_roundtrip() {
+        let discovery = InMemoryDiscovery::new();
+        let space = [7u8; 32];
+        let endpoint: SocketAddr = "127.0.0.1:9999".parse().unwrap();
+
+        discovery
+            .announce(
+                space,
+                DiscoveryRecord {
+                    endpoint,
+                    observed_at_ms: 1,
+                    ttl_ms: 30_000,
+                },
+            )
+            .await
+            .unwrap();
+
+        let found = discovery.discover(space, 8).await.unwrap();
+        assert_eq!(found, vec![endpoint]);
+    }
+
+    #[tokio::test]
+    async fn announce_rejects_zero_ttl() {
+        let discovery = InMemoryDiscovery::new();
+        let res = discovery
+            .announce(
+                [1u8; 32],
+                DiscoveryRecord {
+                    endpoint: "127.0.0.1:9".parse().unwrap(),
+                    observed_at_ms: 1,
+                    ttl_ms: 0,
+                },
+            )
+            .await;
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn federated_discovery_multinode_roundtrip() {
+        let node_a = Arc::new(InMemoryDiscovery::new());
+        let node_b = Arc::new(InMemoryDiscovery::new());
+        let node_c = Arc::new(InMemoryDiscovery::new());
+
+        let mesh = FederatedDiscovery::new(vec![node_a.clone(), node_b.clone(), node_c.clone()]);
+
+        let space = [0x42u8; 32];
+        let endpoint: SocketAddr = "10.10.10.10:4242".parse().unwrap();
+
+        mesh.announce(
+            space,
+            DiscoveryRecord {
+                endpoint,
+                observed_at_ms: 10,
+                ttl_ms: 30_000,
+            },
+        )
+        .await
+        .unwrap();
+
+        let found_a = node_a.discover(space, 8).await.unwrap();
+        let found_b = node_b.discover(space, 8).await.unwrap();
+        let found_c = node_c.discover(space, 8).await.unwrap();
+
+        assert_eq!(found_a, vec![endpoint]);
+        assert_eq!(found_b, vec![endpoint]);
+        assert_eq!(found_c, vec![endpoint]);
+
+        let merged = mesh.discover(space, 8).await.unwrap();
+        assert_eq!(merged, vec![endpoint]);
+    }
+
+    #[test]
+    fn rendezvous_space_hash_is_deterministic() {
+        let key = [3u8; 32];
+        let a = space_hash_from_rendezvous(3333, 0x1337, &key);
+        let b = space_hash_from_rendezvous(3333, 0x1337, &key);
+        let c = space_hash_from_rendezvous(3334, 0x1337, &key);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[tokio::test]
+    async fn discovery_service_uses_bootstrap_fallback() {
+        let local = InMemoryDiscovery::new();
+        let bootstrap: SocketAddr = "203.0.113.10:7700".parse().unwrap();
+        let service = DiscoveryService::with_bootstrap_peers(local, vec![bootstrap]);
+
+        let found = service.discover_endpoints([9u8; 32], 4).await.unwrap();
+        assert_eq!(found, vec![bootstrap]);
+    }
+
+    #[test]
+    fn parse_bootstrap_peers_skips_invalid_and_dedups() {
+        let peers = vec![
+            "127.0.0.1:7000".to_string(),
+            "127.0.0.1:7000".to_string(),
+            "not-a-peer".to_string(),
+            "192.0.2.5:7001".to_string(),
+        ];
+        let parsed = parse_bootstrap_peers(&peers);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0], "127.0.0.1:7000".parse::<SocketAddr>().unwrap());
+        assert_eq!(parsed[1], "192.0.2.5:7001".parse::<SocketAddr>().unwrap());
+    }
+}

@@ -1,0 +1,46 @@
+[package]
+name = "ethersync"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ouroboros-crypto = { path = "../ouroboros-crypto" }
+tokio = { version = "1.37", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+tracing = "0.1"
+bytes = "1.6"
+chrono = { version = "0.4", features = ["serde"] }
+
+# SQLite support (optional)
+rusqlite = { version = "0.30", features = ["bundled"], optional = true }
+
+# Networking
+quinn = { version = "0.11", optional = true }
+
+# Gossip / Bloom filter
+bitvec = "1.0"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+hex = "0.4"
+blake3 = "1.5"
+bincode = "1.3"
+
+# Erasure coding
+reed-solomon-erasure = "6.0"
+
+# Compression (optional)
+lz4 = { version = "1.24", optional = true }
+
+# Metrics
+metrics = { version = "0.22", optional = true }
+
+[dev-dependencies]
+tracing-subscriber = "0.3"
+
+[features]
+default = []
+handshake-fallback = []  # STUB - for future integration with handshacke
+persistent-storage = ["dep:rusqlite"]
+quic = ["dep:quinn"]
+compression = ["dep:lz4"]
+metrics = ["dep:metrics"]

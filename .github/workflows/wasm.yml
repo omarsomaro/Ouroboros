@@ -1,0 +1,24 @@
+name: WASM
+
+on:
+  pull_request:
+    paths:
+      - "ouroboros-crypto/**"
+      - ".github/workflows/wasm.yml"
+  push:
+    branches: [main, master]
+    paths:
+      - "ouroboros-crypto/**"
+      - ".github/workflows/wasm.yml"
+  workflow_dispatch:
+
+jobs:
+  wasm-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Add wasm target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Check ouroboros-crypto for wasm
+        run: cargo check -p ouroboros-crypto --target wasm32-unknown-unknown

@@ -1,0 +1,66 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+
+jobs:
+  nightly-build:
+    name: nightly-build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive_ext: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive_ext: zip
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binaries
+        run: cargo build --release --locked --bin handshacke --bin hs-cli
+
+      - name: Package Linux nightly artifacts
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          archive="nightly-${GITHUB_SHA:0:12}-${{ matrix.target }}.${{ matrix.archive_ext }}"
+          tar -C target/release -czf "dist/${archive}" handshacke hs-cli
+
+      - name: Package Windows nightly artifacts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $shortSha = $env:GITHUB_SHA.Substring(0, 12)
+          $archive = "nightly-$shortSha-${{ matrix.target }}.${{ matrix.archive_ext }}"
+          Compress-Archive -Path target/release/handshacke.exe,target/release/hs-cli.exe -DestinationPath "dist/$archive" -Force
+
+      - name: Write nightly metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > dist/nightly-metadata.txt <<EOF
+          run_id=${GITHUB_RUN_ID}
+          run_number=${GITHUB_RUN_NUMBER}
+          sha=${GITHUB_SHA}
+          ref=${GITHUB_REF}
+          generated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          EOF
+
+      - name: Upload nightly artifact bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-${{ matrix.target }}
+          path: dist/*
+          retention-days: 14
+          if-no-files-found: error
