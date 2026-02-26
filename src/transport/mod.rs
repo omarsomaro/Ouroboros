@@ -239,8 +239,7 @@ pub async fn establish_connection(p: &RendezvousParams, cfg: &Config) -> Result<
         }
     }
 
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Other,
+    Err(std::io::Error::other(
         "Connection failed: no reachable transport found (NAT strategy exhausted)",
     )
     .into())

@@ -377,13 +377,15 @@ impl AppState {
             }
         }
 
-        let mut node_cfg = NodeConfig::default();
-        node_cfg.bind_addr = cfg.bind_addr.clone();
-        node_cfg.bootstrap_peers = cfg.bootstrap_peers;
-        node_cfg.gossip_interval_secs = cfg.gossip_interval_secs.max(1);
-        node_cfg.sweep_interval_secs = cfg.sweep_interval_secs.max(1);
-        node_cfg.gossip_ttl = cfg.gossip_ttl.max(1);
-        node_cfg.enable_compression = cfg.enable_compression;
+        let node_cfg = NodeConfig {
+            bind_addr: cfg.bind_addr.clone(),
+            bootstrap_peers: cfg.bootstrap_peers,
+            gossip_interval_secs: cfg.gossip_interval_secs.max(1),
+            sweep_interval_secs: cfg.sweep_interval_secs.max(1),
+            gossip_ttl: cfg.gossip_ttl.max(1),
+            enable_compression: cfg.enable_compression,
+            ..NodeConfig::default()
+        };
 
         let node = Arc::new(
             EtherNode::new(node_cfg)

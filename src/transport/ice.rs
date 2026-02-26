@@ -272,7 +272,7 @@ impl IceAgent {
             }
         };
 
-        let timeout_ms = timeout_ms.max(2000).min(20_000);
+        let timeout_ms = timeout_ms.clamp(2000, 20_000);
         let tag8 = self.params.tag8;
         let key_enc = self.offer.rendezvous.key_enc;
         let tag16 = self.offer.rendezvous.tag16;
