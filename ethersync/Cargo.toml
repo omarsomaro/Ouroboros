@@ -2,6 +2,8 @@
 name = "ethersync"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+description = "Connectionless messaging and shared-space synchronization for Handshacke"
 
 [dependencies]
 ouroboros-crypto = { path = "../ouroboros-crypto" }
