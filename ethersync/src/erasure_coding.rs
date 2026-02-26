@@ -116,13 +116,13 @@ impl ErasureCoder {
 
         let mut shards = vec![vec![0u8; shard_len]; total];
 
-        for i in 0..needed {
+        for (i, shard) in shards.iter_mut().enumerate().take(needed) {
             let start = i * shard_len;
             if start >= data.len() {
                 break;
             }
             let end = ((i + 1) * shard_len).min(data.len());
-            shards[i][..(end - start)].copy_from_slice(&data[start..end]);
+            shard[..(end - start)].copy_from_slice(&data[start..end]);
         }
 
         let rs = ReedSolomon::new(needed, parity).map_err(|e| {

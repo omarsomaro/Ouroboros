@@ -273,6 +273,14 @@ pub struct GossipEngine {
     new_message_tx: Option<mpsc::Sender<EtherMessage>>,
 }
 
+struct HandleFrameCtx<'a> {
+    peers: &'a PeerManager,
+    storage: &'a Arc<Mutex<EtherStorage>>,
+    socket: &'a EtherUdpSocket,
+    seen: &'a Arc<RwLock<HashSet<[u8; 32]>>>,
+    new_message_tx: &'a Option<mpsc::Sender<EtherMessage>>,
+}
+
 impl GossipEngine {
     /// Create new gossip engine
     pub fn new(
@@ -367,7 +375,6 @@ impl GossipEngine {
         let storage = Arc::clone(&self.storage);
         let socket = Arc::clone(&self.socket);
         let seen = Arc::clone(&self.seen_messages);
-        let default_ttl = self.default_ttl;
 
         tokio::spawn(async move {
             loop {
@@ -378,17 +385,14 @@ impl GossipEngine {
 
                         // Process frame
                         if let Ok(frame) = bincode::deserialize::<GossipFrame>(&data) {
-                            let _ = Self::handle_frame(
-                                frame,
-                                addr,
-                                &peers,
-                                &storage,
-                                &socket,
-                                &seen,
-                                default_ttl,
-                                &new_message_tx,
-                            )
-                            .await;
+                            let ctx = HandleFrameCtx {
+                                peers: &peers,
+                                storage: &storage,
+                                socket: &socket,
+                                seen: &seen,
+                                new_message_tx: &new_message_tx,
+                            };
+                            let _ = Self::handle_frame(frame, addr, &ctx).await;
                         }
                     }
                     Ok(None) => {
@@ -447,12 +451,7 @@ impl GossipEngine {
     async fn handle_frame(
         frame: GossipFrame,
         from: SocketAddr,
-        peers: &PeerManager,
-        storage: &Arc<Mutex<EtherStorage>>,
-        socket: &EtherUdpSocket,
-        seen: &Arc<RwLock<HashSet<[u8; 32]>>>,
-        _default_ttl: u8,
-        new_message_tx: &Option<mpsc::Sender<EtherMessage>>,
+        ctx: &HandleFrameCtx<'_>,
     ) -> Result<(), EtherSyncError> {
         debug!(
             "Received gossip frame from {}: {:?}",
@@ -469,7 +468,7 @@ impl GossipEngine {
 
                 // Get our messages for this slot
                 let our_messages = {
-                    let storage = storage.lock().await;
+                    let storage = ctx.storage.lock().await;
                     storage.get_slot_messages(slot)?
                 };
 
@@ -499,7 +498,7 @@ impl GossipEngine {
                 // For now, proactively send if we have extra
                 if !missing_hashes.is_empty() && missing_hashes.len() <= 5 {
                     // Send our extra messages
-                    let storage = storage.lock().await;
+                    let storage = ctx.storage.lock().await;
                     let mut messages_to_send = Vec::new();
 
                     for hash in missing_hashes {
@@ -516,7 +515,7 @@ impl GossipEngine {
                             messages: messages_to_send,
                         };
                         if let Ok(bytes) = bincode::serialize(&response) {
-                            let _ = socket.send_to(&bytes, from).await;
+                            let _ = ctx.socket.send_to(&bytes, from).await;
                             trace!("Sent {} messages to {}", count, from);
                         }
                     }
@@ -530,7 +529,7 @@ impl GossipEngine {
                     from
                 );
 
-                let storage = storage.lock().await;
+                let storage = ctx.storage.lock().await;
                 let mut messages = Vec::new();
 
                 for hash in hashes {
@@ -546,7 +545,7 @@ impl GossipEngine {
                     let count = messages.len();
                     let response = GossipFrame::Response { messages };
                     if let Ok(bytes) = bincode::serialize(&response) {
-                        let _ = socket.send_to(&bytes, from).await;
+                        let _ = ctx.socket.send_to(&bytes, from).await;
                         debug!("Sent {} messages to {}", count, from);
                     }
                 }
@@ -556,7 +555,7 @@ impl GossipEngine {
                 trace!("Received {} messages from {}", messages.len(), from);
 
                 // Store received messages
-                let mut storage = storage.lock().await;
+                let mut storage = ctx.storage.lock().await;
                 for msg_bytes in messages {
                     if let Ok(msg) = EtherMessage::from_bytes(&msg_bytes) {
                         let hash = blake3::hash(&msg.encrypted_payload);
@@ -564,7 +563,7 @@ impl GossipEngine {
 
                         // Check if we've seen this message
                         {
-                            let seen_cache = seen.read().await;
+                            let seen_cache = ctx.seen.read().await;
                             if seen_cache.contains(&hash_bytes) {
                                 continue; // Already have it
                             }
@@ -574,12 +573,12 @@ impl GossipEngine {
                         let _ = storage.store(msg.header.slot_id, hash_bytes, msg.clone());
 
                         {
-                            let mut seen_cache = seen.write().await;
+                            let mut seen_cache = ctx.seen.write().await;
                             seen_cache.insert(hash_bytes);
                         }
 
                         // Notify subscribers of new message
-                        if let Some(ref tx) = new_message_tx {
+                        if let Some(ref tx) = ctx.new_message_tx {
                             let _ = tx.send(msg).await;
                         }
 
@@ -605,7 +604,7 @@ impl GossipEngine {
                 let hash_bytes = *hash.as_bytes();
 
                 {
-                    let seen_cache = seen.read().await;
+                    let seen_cache = ctx.seen.read().await;
                     if seen_cache.contains(&hash_bytes) {
                         return Ok(()); // Already seen
                     }
@@ -613,18 +612,18 @@ impl GossipEngine {
 
                 // Store
                 {
-                    let mut storage = storage.lock().await;
+                    let mut storage = ctx.storage.lock().await;
                     let _ = storage.store(msg.header.slot_id, hash_bytes, msg.clone());
                 }
 
                 // Mark as seen
                 {
-                    let mut seen_cache = seen.write().await;
+                    let mut seen_cache = ctx.seen.write().await;
                     seen_cache.insert(hash_bytes);
                 }
 
                 // Notify subscribers of new message
-                if let Some(ref tx) = new_message_tx {
+                if let Some(ref tx) = ctx.new_message_tx {
                     let _ = tx.send(msg.clone()).await;
                 }
 
@@ -636,11 +635,11 @@ impl GossipEngine {
 
                 if let Ok(bytes) = bincode::serialize(&forward) {
                     // Flood to peers (except sender)
-                    let peer_addrs = peers.get_peers().await;
+                    let peer_addrs = ctx.peers.get_peers().await;
                     let count = peer_addrs.len().saturating_sub(1);
                     for peer in &peer_addrs {
                         if *peer != from {
-                            let _ = socket.send_to(&bytes, *peer).await;
+                            let _ = ctx.socket.send_to(&bytes, *peer).await;
                         }
                     }
                     debug!("Forwarded message to {} peers", count);
@@ -651,7 +650,7 @@ impl GossipEngine {
                 // Respond with Pong
                 let pong = GossipFrame::Pong;
                 if let Ok(bytes) = bincode::serialize(&pong) {
-                    let _ = socket.send_to(&bytes, from).await;
+                    let _ = ctx.socket.send_to(&bytes, from).await;
                 }
             }
 

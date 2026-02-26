@@ -70,7 +70,7 @@ struct Subscription {
     /// Sender channel for incoming messages
     sender: mpsc::Sender<EtherMessage>,
     /// Space hash (derived from passphrase)
-    space_hash: [u8; 32],
+    _space_hash: [u8; 32],
     /// Last scanned slot
     _last_slot: RwLock<u64>,
 }
@@ -224,7 +224,7 @@ impl EtherNode {
         let subscription = Subscription {
             _passphrase: passphrase.to_string(),
             sender: tx,
-            space_hash,
+            _space_hash: space_hash,
             _last_slot: RwLock::new(0),
         };
 
@@ -261,7 +261,7 @@ impl EtherNode {
         for message in slot_messages {
             for sub in subs.iter() {
                 // Check if message belongs to this subscription's space
-                if message.header.coordinate_hash == sub.space_hash {
+                if message.header.coordinate_hash == sub._space_hash {
                     // Try to send - ignore errors if channel closed
                     let _ = sub.sender.send(message.clone()).await;
                 }
